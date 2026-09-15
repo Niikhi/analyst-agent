@@ -275,7 +275,7 @@ SELECT
     END                                                            AS ebitda_uplift_if_best_in_class,
 
     md.enterprise_value,
-    md.ev_to_ebitda                                                AS entry_multiple,
+    CASE WHEN md.ev_to_ebitda > 0 THEN md.ev_to_ebitda END         AS entry_multiple,
     sm.median_ebitda_margin,
     md.market_cap,
     l.source_url

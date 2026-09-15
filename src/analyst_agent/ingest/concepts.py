@@ -56,11 +56,15 @@ INSTANT_CONCEPTS: dict[str, list[str]] = {
     "long_term_debt_noncurrent": [
         "LongTermDebtNoncurrent",
         "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermNotesAndLoans",
+        "LongTermNotesPayable",
         "LongTermDebt",
     ],
     "long_term_debt_current": [
         "LongTermDebtCurrent",
         "LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "NotesAndLoansPayableCurrent",
+        "NotesPayableCurrent",
     ],
     "short_term_borrowings": ["ShortTermBorrowings", "OtherShortTermBorrowings", "DebtCurrent"],
     "combined_debt": ["DebtLongtermAndShorttermCombinedAmount"],

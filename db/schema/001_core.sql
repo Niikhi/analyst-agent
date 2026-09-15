@@ -116,7 +116,8 @@ CREATE TABLE signals (
     value_unit   TEXT,
     direction    TEXT CHECK (direction IN ('positive','negative','neutral')),
     source_id    BIGINT NOT NULL REFERENCES sources(source_id),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (company_id, event_date, signal_type, headline)
 );
 
 CREATE INDEX idx_companies_sector    ON companies (sector_id);
