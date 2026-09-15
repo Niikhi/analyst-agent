@@ -1,0 +1,24 @@
+[project]
+name = "analyst-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Nikhil Ganesh", email = "nalagandula@integconsulting.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.2.0",
+    "pydantic>=2.9",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+analyst-agent = "analyst_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
