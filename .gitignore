@@ -12,3 +12,5 @@ venv/
 *.dump
 *.sql.gz
 data/raw/
+
+*.pdf
