@@ -88,13 +88,27 @@ async def run_analysis(
     )
 
 
+class ModelNotConfigured(RuntimeError):
+    pass
+
+
 def default_model() -> Model:
+    backend = os.getenv("ANALYST_MODEL", "bedrock").lower()
+
+    if backend == "stub":
+        from analyst_agent.agent.stub import StubModel
+
+        return StubModel()
+
+    if backend != "bedrock":
+        raise ModelNotConfigured(f"Unknown ANALYST_MODEL={backend!r}. Use 'bedrock' or 'stub'.")
+
     from analyst_agent.agent.bedrock import BedrockConverseModel
 
     model_id = os.getenv("BEDROCK_MODEL_ID")
     if not model_id:
-        raise RuntimeError(
-            "BEDROCK_MODEL_ID is not set. Set it in .env, or pass an explicit model to "
-            "run_analysis."
+        raise ModelNotConfigured(
+            "BEDROCK_MODEL_ID is not set. Set it in .env alongside valid AWS credentials, "
+            "or set ANALYST_MODEL=stub to exercise the transport without a model."
         )
     return BedrockConverseModel(model_id=model_id, region=os.getenv("AWS_REGION", "us-east-1"))
