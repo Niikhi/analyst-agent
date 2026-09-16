@@ -1,19 +1,14 @@
-import os
 import time
 from typing import Any, Literal
 
-from agents.exceptions import UserError
+from agents.exceptions import MaxTurnsExceeded, UserError
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from analyst_agent.agent.personas import PERSONA_KEYS, load_personas
-from analyst_agent.agent.runner import (
-    SECTORS,
-    AnalystRequest,
-    ModelNotConfigured,
-    mcp_url,
-    run_analysis,
-)
+from analyst_agent.agent.aws import AwsCredentialsUnavailable
+from analyst_agent.agent.runner import SECTORS, AnalystRequest, mcp_url, run_analysis
+from analyst_agent.config import MissingSetting, get_settings
 
 PersonaKey = Literal["mutual_fund_analyst", "equity_analyst", "pe_analyst"]
 SectorKey = Literal["tech", "retail", "logistics"]
@@ -58,9 +53,14 @@ class PersonaInfo(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    settings = get_settings()
     return {
         "status": "ok",
-        "model": os.getenv("ANALYST_MODEL", "bedrock"),
+        "model": settings.bedrock_model_id or "<BEDROCK_MODEL_ID unset>",
+        "aws_profile": settings.aws_profile or "<default chain>",
+        "aws_region": settings.aws_region,
+        "thinking_budget": settings.bedrock_thinking_budget,
+        "max_turns": settings.agent_max_turns,
         "mcp_url": mcp_url(),
         "personas": list(PERSONA_KEYS),
         "sectors": list(SECTORS),
@@ -99,8 +99,18 @@ async def ask(request: AskRequest) -> AskResponse:
                 question=request.question, persona=request.persona, sector=request.sector
             )
         )
-    except ModelNotConfigured as exc:
+    except MissingSetting as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AwsCredentialsUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except MaxTurnsExceeded as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"The agent did not finish within {get_settings().agent_max_turns} tool-call "
+                "turns. Raise AGENT_MAX_TURNS, or narrow the question."
+            ),
+        ) from exc
     except UserError as exc:
         raise HTTPException(
             status_code=503,
@@ -117,5 +127,5 @@ async def ask(request: AskRequest) -> AskResponse:
         answer=result.answer.model_dump(),
         tool_calls=result.tool_calls,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
-        model=os.getenv("ANALYST_MODEL", "bedrock"),
+        model=get_settings().bedrock_model_id,
     )

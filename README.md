@@ -55,7 +55,19 @@ psql -U postgres -d "analyst-agent" -f db/seed/analyst-agent-data.sql
 uv run python -m analyst_agent.ingest --sector all
 ```
 
-**3. Run the three processes** (separate terminals)
+**3. Point at a Bedrock model**
+
+Credentials come from a named AWS profile, so an SSO login is enough — no keys in `.env`:
+
+```bash
+aws sso login --profile default
+uv run python -m analyst_agent.agent.models     # lists Claude models your account has
+```
+
+Set the chosen identifier as `BEDROCK_MODEL_ID`. Prefer an inference profile (`us.anthropic.…`)
+when the base model is not available on-demand in your region.
+
+**4. Run the three processes** (separate terminals)
 
 ```bash
 uv run python -m analyst_agent.mcp_server                      # MCP server  :8765
@@ -67,18 +79,45 @@ Open http://localhost:8501, or http://localhost:8000/docs for the API.
 
 ### Configuration
 
+All settings are read once through `src/analyst_agent/config.py`, a `pydantic-settings` model.
+Nothing else in the codebase calls `os.getenv` or `load_dotenv`, so every setting has one
+declared type, one default, and one place to change it.
+
 | Variable | Purpose |
 |---|---|
 | `ANALYST_DB_ADMIN_URL` | Owner connection, used by the ingest pipeline only |
 | `ANALYST_DB_URL` | Read-only `analyst_ro` connection, used by the MCP server |
 | `SEC_USER_AGENT` | `app-name your@email.com`. EDGAR returns 403 without a contact address |
-| `ANALYST_MODEL` | `bedrock` (default) or `stub` |
-| `BEDROCK_MODEL_ID` | Bedrock model identifier |
+| `AWS_PROFILE` | Named profile from `~/.aws/config`. Blank uses the default chain. |
 | `AWS_REGION` | Defaults to `us-east-1` |
+| `BEDROCK_MODEL_ID` | Model or inference-profile id. See step 3. |
+| `BEDROCK_MAX_TOKENS` | Defaults to 8192 |
+| `BEDROCK_TEMPERATURE` | Blank leaves it to the model |
+| `BEDROCK_THINKING_BUDGET` | Blank disables extended thinking. Minimum 1024 when set. |
+| `AGENT_MAX_TURNS` | Tool-call turns before a run is abandoned. Defaults to 16. |
 | `MCP_HOST` / `MCP_PORT` | MCP server bind address |
 | `API_URL` | Where the UI looks for the API |
 
-No AWS keys live in `.env`; boto3 resolves credentials from the environment as usual.
+**No AWS keys are stored anywhere.** boto3 builds a session from `AWS_PROFILE`, so SSO works
+directly. An expired token surfaces as a 503 telling you to run `aws sso login --profile <name>`
+rather than a stack trace.
+
+### Choosing a model
+
+Sonnet-class or better is the right default. The agent writes SQL against a twelve-relation
+schema, has to respect NULL semantics it is told about in prose, and has to produce genuinely
+different analysis per persona. A small model writes plausible but wrong SQL and flattens the
+persona differences, which is exactly what the brief grades.
+
+`BEDROCK_THINKING_BUDGET` enables extended thinking where the model supports it. The tool loop
+already imposes structure, so it helps most at the final synthesis step rather than during
+retrieval. Note that Bedrock rejects `temperature` when thinking is enabled, so the adapter
+drops it automatically.
+
+`AGENT_MAX_TURNS` defaults to 16. A complete pass is roughly `describe_schema`,
+`resolve_company`, three to five queries, then the answer; the remainder is headroom for
+correcting a failed query. Exhausting it returns a 504 naming the limit rather than a partial
+answer.
 
 ---
 
@@ -292,13 +331,14 @@ persona changes.
 development. `agent/bedrock.py` adapts the Agents SDK `Model` interface to the Converse API via
 boto3 with no LiteLLM layer, and its conversion functions *are* tested directly — tool-call
 round trips produce valid user/assistant alternation, consecutive same-role messages merge as
-Converse requires, Agents SDK tools become `toolConfig` entries, and Converse content blocks
-become `ResponseOutputMessage` / `ResponseFunctionToolCall` items. The untested surface is the
-single `client.converse(**request)` call.
+Converse requires, Agents SDK tools become `toolConfig` entries, `reasoningContent` blocks are
+skipped, and Converse content blocks become `ResponseOutputMessage` /
+`ResponseFunctionToolCall` items. The untested surface is the single
+`client.converse(**request)` call.
 
-To run without credentials, `ANALYST_MODEL=stub` exercises the API and UI with a placeholder
-that calls no model and queries nothing. It labels itself in every text field, reports low
-confidence, and the UI shows a standing warning while active.
+`agent/scripted.py` is a `Model` that replays a fixed sequence of tool calls and a final
+payload. It is how the loop is tested without a cloud call, and it is a test fixture rather
+than a runtime mode: there is no way to serve a fake answer through the API.
 
 Converse has no native structured-output mode, so the JSON schema is appended to the system
 prompt. If that proves unreliable in practice, the fallback is a `submit_analysis` tool whose

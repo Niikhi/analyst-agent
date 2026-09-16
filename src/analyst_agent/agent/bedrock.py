@@ -2,7 +2,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-import boto3
 from agents.items import ModelResponse
 from agents.models.interface import Model
 from agents.usage import Usage
@@ -11,6 +10,9 @@ from openai.types.responses import (
     ResponseOutputMessage,
     ResponseOutputText,
 )
+
+from analyst_agent.agent.aws import bedrock_runtime, wrap_credential_error
+from analyst_agent.config import get_settings
 
 JSON_ONLY = (
     "\n\nReturn your final answer as a single JSON object matching this schema exactly. "
@@ -129,6 +131,8 @@ def from_converse_response(payload: dict[str, Any], turn: int) -> list[Any]:
     for index, block in enumerate(content):
         if "text" in block:
             texts.append(block["text"])
+        elif "reasoningContent" in block:
+            continue
         elif "toolUse" in block:
             use = block["toolUse"]
             items.append(
@@ -160,15 +164,26 @@ def from_converse_response(payload: dict[str, Any], turn: int) -> list[Any]:
 @dataclass
 class BedrockConverseModel(Model):
     model_id: str
-    region: str = "us-east-1"
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     temperature: float | None = None
+    thinking_budget: int | None = None
     _client: Any = field(default=None, repr=False)
     _turn: int = field(default=0, repr=False)
 
+    @classmethod
+    def from_settings(cls) -> "BedrockConverseModel":
+        settings = get_settings()
+        settings.require("bedrock_model_id")
+        return cls(
+            model_id=settings.bedrock_model_id,
+            max_tokens=settings.bedrock_max_tokens,
+            temperature=settings.bedrock_temperature,
+            thinking_budget=settings.bedrock_thinking_budget,
+        )
+
     def client(self) -> Any:
         if self._client is None:
-            self._client = boto3.client("bedrock-runtime", region_name=self.region)
+            self._client = bedrock_runtime()
         return self._client
 
     def _system(self, instructions: str | None, output_schema: Any) -> list[dict[str, str]]:
@@ -177,6 +192,17 @@ class BedrockConverseModel(Model):
             schema = json.dumps(output_schema.json_schema(), indent=2)
             text += JSON_ONLY.format(schema=schema)
         return [{"text": text}] if text.strip() else []
+
+    def _inference_config(self, model_settings: Any) -> dict[str, Any]:
+        config: dict[str, Any] = {"maxTokens": self.max_tokens}
+        if self.thinking_budget is not None:
+            return config
+        temperature = getattr(model_settings, "temperature", None)
+        if temperature is None:
+            temperature = self.temperature
+        if temperature is not None:
+            config["temperature"] = temperature
+        return config
 
     async def get_response(
         self,
@@ -194,21 +220,25 @@ class BedrockConverseModel(Model):
         request: dict[str, Any] = {
             "modelId": self.model_id,
             "messages": to_converse_messages(input),
-            "inferenceConfig": {"maxTokens": self.max_tokens},
+            "inferenceConfig": self._inference_config(model_settings),
         }
         system = self._system(system_instructions, output_schema)
         if system:
             request["system"] = system
 
-        temperature = getattr(model_settings, "temperature", None) or self.temperature
-        if temperature is not None:
-            request["inferenceConfig"]["temperature"] = temperature
-
         tool_config = to_tool_config(tools)
         if tool_config:
             request["toolConfig"] = tool_config
 
-        payload = self.client().converse(**request)
+        if self.thinking_budget is not None:
+            request["additionalModelRequestFields"] = {
+                "thinking": {"type": "enabled", "budget_tokens": self.thinking_budget}
+            }
+
+        try:
+            payload = self.client().converse(**request)
+        except Exception as exc:
+            raise wrap_credential_error(exc) from exc
 
         raw_usage = payload.get("usage", {})
         usage = Usage(

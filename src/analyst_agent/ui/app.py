@@ -1,12 +1,9 @@
-import os
-
 import requests
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv()
+from analyst_agent.config import get_settings
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_URL = get_settings().api_url
 TIMEOUT = 180
 
 SAMPLES = {
@@ -154,12 +151,14 @@ with st.sidebar:
     st.caption(f"API: {API_URL}")
     st.caption(f"MCP: {health['mcp_url']}")
     st.caption(f"Model: {health['model']}")
+    st.caption(f"AWS: {health['aws_profile']} / {health['aws_region']}")
+    if health.get("thinking_budget"):
+        st.caption(f"Thinking budget: {health['thinking_budget']}")
 
-if health["model"] == "stub":
-    st.warning(
-        "Running with ANALYST_MODEL=stub. No language model is called and answers are "
-        "placeholders that verify wiring only. Set ANALYST_MODEL=bedrock with credentials "
-        "for real analysis."
+if health["model"].startswith("<"):
+    st.error(
+        "BEDROCK_MODEL_ID is not set. Run `python -m analyst_agent.agent.models` to list "
+        "the Claude models available on your AWS account, then set one in .env."
     )
 
 with st.expander("What this persona does differently", expanded=False):

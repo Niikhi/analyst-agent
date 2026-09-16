@@ -1,15 +1,13 @@
-import os
 from dataclasses import dataclass
 
 from agents import Agent, ModelSettings, Runner, set_tracing_disabled
 from agents.mcp import MCPServerStreamableHttp, MCPServerStreamableHttpParams
 from agents.models.interface import Model
-from dotenv import load_dotenv
 
 from analyst_agent.agent.outputs import BaseAnswer
 from analyst_agent.agent.personas import Persona, get_persona
+from analyst_agent.config import get_settings
 
-load_dotenv()
 set_tracing_disabled(True)
 
 SECTORS = ("tech", "retail", "logistics")
@@ -40,9 +38,7 @@ class AnalystResult:
 
 
 def mcp_url() -> str:
-    host = os.getenv("MCP_HOST", "127.0.0.1")
-    port = os.getenv("MCP_PORT", "8765")
-    return os.getenv("MCP_URL", f"http://{host}:{port}/mcp")
+    return get_settings().resolved_mcp_url
 
 
 def build_agent(persona: Persona, sector: str, model: Model | str, server: MCPServerStreamableHttp) -> Agent:
@@ -59,11 +55,12 @@ def build_agent(persona: Persona, sector: str, model: Model | str, server: MCPSe
 async def run_analysis(
     request: AnalystRequest,
     model: Model | str | None = None,
-    max_turns: int = 12,
+    max_turns: int | None = None,
 ) -> AnalystResult:
     request = request.validated()
     persona = get_persona(request.persona)
     resolved_model = model if model is not None else default_model()
+    turns = max_turns if max_turns is not None else get_settings().agent_max_turns
 
     params = MCPServerStreamableHttpParams(url=mcp_url())
     async with MCPServerStreamableHttp(params=params, cache_tools_list=True) as server:
@@ -71,7 +68,7 @@ async def run_analysis(
         result = await Runner.run(
             agent,
             f"Sector: {request.sector}\nQuestion: {request.question}",
-            max_turns=max_turns,
+            max_turns=turns,
         )
 
     tool_calls = [
@@ -88,27 +85,7 @@ async def run_analysis(
     )
 
 
-class ModelNotConfigured(RuntimeError):
-    pass
-
-
 def default_model() -> Model:
-    backend = os.getenv("ANALYST_MODEL", "bedrock").lower()
-
-    if backend == "stub":
-        from analyst_agent.agent.stub import StubModel
-
-        return StubModel()
-
-    if backend != "bedrock":
-        raise ModelNotConfigured(f"Unknown ANALYST_MODEL={backend!r}. Use 'bedrock' or 'stub'.")
-
     from analyst_agent.agent.bedrock import BedrockConverseModel
 
-    model_id = os.getenv("BEDROCK_MODEL_ID")
-    if not model_id:
-        raise ModelNotConfigured(
-            "BEDROCK_MODEL_ID is not set. Set it in .env alongside valid AWS credentials, "
-            "or set ANALYST_MODEL=stub to exercise the transport without a model."
-        )
-    return BedrockConverseModel(model_id=model_id, region=os.getenv("AWS_REGION", "us-east-1"))
+    return BedrockConverseModel.from_settings()

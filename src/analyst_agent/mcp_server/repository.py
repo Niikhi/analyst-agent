@@ -1,13 +1,12 @@
-import os
 import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from dotenv import load_dotenv
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from analyst_agent.config import get_settings
 from analyst_agent.mcp_server import catalog
 from analyst_agent.mcp_server.schemas import (
     ColumnInfo,
@@ -16,8 +15,6 @@ from analyst_agent.mcp_server.schemas import (
     RelationInfo,
     RunSqlResult,
 )
-
-load_dotenv()
 
 
 MAX_ROWS = 200
@@ -34,10 +31,9 @@ def _jsonable(value: Any) -> Any:
 
 
 def build_engine() -> Engine:
-    url = os.getenv("ANALYST_DB_URL")
-    if not url:
-        raise RuntimeError("ANALYST_DB_URL is not set (see .env.example)")
-    return create_engine(url, future=True, pool_pre_ping=True)
+    settings = get_settings()
+    settings.require("analyst_db_url")
+    return create_engine(settings.analyst_db_url, future=True, pool_pre_ping=True)
 
 
 class Repository:
