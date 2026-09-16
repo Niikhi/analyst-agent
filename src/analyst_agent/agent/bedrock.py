@@ -11,8 +11,10 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 
-from analyst_agent.agent.aws import bedrock_runtime, wrap_credential_error
+from analyst_agent.agent.aws import as_credential_error, client
 from analyst_agent.config import get_settings
+
+CACHE_POINT = {"cachePoint": {"type": "default"}}
 
 JSON_ONLY = (
     "\n\nReturn your final answer as a single JSON object matching this schema exactly. "
@@ -105,8 +107,8 @@ def to_converse_messages(model_input: str | list[Any]) -> list[dict[str, Any]]:
     return messages
 
 
-def to_tool_config(tools: list[Any]) -> dict[str, Any] | None:
-    specs = []
+def to_tool_config(tools: list[Any], cache: bool = False) -> dict[str, Any] | None:
+    specs: list[dict[str, Any]] = []
     for tool in tools:
         schema = getattr(tool, "params_json_schema", None)
         if schema is None:
@@ -120,7 +122,11 @@ def to_tool_config(tools: list[Any]) -> dict[str, Any] | None:
                 }
             }
         )
-    return {"tools": specs} if specs else None
+    if not specs:
+        return None
+    if cache:
+        specs.append(CACHE_POINT)
+    return {"tools": specs}
 
 
 def from_converse_response(payload: dict[str, Any], turn: int) -> list[Any]:
@@ -167,6 +173,7 @@ class BedrockConverseModel(Model):
     max_tokens: int = 8192
     temperature: float | None = None
     thinking_budget: int | None = None
+    prompt_caching: bool = True
     _client: Any = field(default=None, repr=False)
     _turn: int = field(default=0, repr=False)
 
@@ -179,19 +186,25 @@ class BedrockConverseModel(Model):
             max_tokens=settings.bedrock_max_tokens,
             temperature=settings.bedrock_temperature,
             thinking_budget=settings.bedrock_thinking_budget,
+            prompt_caching=settings.bedrock_prompt_caching,
         )
 
-    def client(self) -> Any:
+    def runtime(self) -> Any:
         if self._client is None:
-            self._client = bedrock_runtime()
+            self._client = client("bedrock-runtime")
         return self._client
 
-    def _system(self, instructions: str | None, output_schema: Any) -> list[dict[str, str]]:
+    def _system(self, instructions: str | None, output_schema: Any) -> list[dict[str, Any]]:
         text = instructions or ""
         if output_schema is not None and not output_schema.is_plain_text():
             schema = json.dumps(output_schema.json_schema(), indent=2)
             text += JSON_ONLY.format(schema=schema)
-        return [{"text": text}] if text.strip() else []
+        if not text.strip():
+            return []
+        blocks: list[dict[str, Any]] = [{"text": text}]
+        if self.prompt_caching:
+            blocks.append(CACHE_POINT)
+        return blocks
 
     def _inference_config(self, model_settings: Any) -> dict[str, Any]:
         config: dict[str, Any] = {"maxTokens": self.max_tokens}
@@ -226,7 +239,7 @@ class BedrockConverseModel(Model):
         if system:
             request["system"] = system
 
-        tool_config = to_tool_config(tools)
+        tool_config = to_tool_config(tools, cache=self.prompt_caching)
         if tool_config:
             request["toolConfig"] = tool_config
 
@@ -236,14 +249,15 @@ class BedrockConverseModel(Model):
             }
 
         try:
-            payload = self.client().converse(**request)
+            payload = self.runtime().converse(**request)
         except Exception as exc:
-            raise wrap_credential_error(exc) from exc
+            raise as_credential_error(exc) from exc
 
         raw_usage = payload.get("usage", {})
+        cached = raw_usage.get("cacheReadInputTokens", 0)
         usage = Usage(
             requests=1,
-            input_tokens=raw_usage.get("inputTokens", 0),
+            input_tokens=raw_usage.get("inputTokens", 0) + cached,
             output_tokens=raw_usage.get("outputTokens", 0),
             total_tokens=raw_usage.get("totalTokens", 0),
         )

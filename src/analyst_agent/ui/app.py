@@ -152,14 +152,13 @@ with st.sidebar:
     st.caption(f"MCP: {health['mcp_url']}")
     st.caption(f"Model: {health['model']}")
     st.caption(f"AWS: {health['aws_profile']} / {health['aws_region']}")
+    extras = []
+    if health.get("prompt_caching"):
+        extras.append("prompt caching")
     if health.get("thinking_budget"):
-        st.caption(f"Thinking budget: {health['thinking_budget']}")
-
-if health["model"].startswith("<"):
-    st.error(
-        "BEDROCK_MODEL_ID is not set. Run `python -m analyst_agent.agent.models` to list "
-        "the Claude models available on your AWS account, then set one in .env."
-    )
+        extras.append(f"thinking {health['thinking_budget']}")
+    if extras:
+        st.caption(" | ".join(extras))
 
 with st.expander("What this persona does differently", expanded=False):
     st.markdown(f"**{chosen['display_name']} works through:**")

@@ -1,7 +1,9 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 
 class Settings(BaseSettings):
@@ -30,11 +32,12 @@ class Settings(BaseSettings):
     )
 
     bedrock_model_id: str = Field(
-        default="",
+        default=DEFAULT_MODEL_ID,
         description="Run 'python -m analyst_agent.agent.models' to list what your account has",
     )
     bedrock_max_tokens: int = 8192
     bedrock_temperature: float | None = None
+    bedrock_prompt_caching: bool = Field(default=True)
     bedrock_thinking_budget: int | None = Field(
         default=None,
         description="Enables extended thinking on models that support it. Minimum 1024.",
@@ -64,12 +67,29 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("bedrock_model_id", mode="before")
+    @classmethod
+    def _blank_is_default(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_MODEL_ID
+        return value
+
     @field_validator("bedrock_thinking_budget")
     @classmethod
     def _min_budget(cls, value: int | None) -> int | None:
         if value is not None and value < 1024:
             raise ValueError("bedrock_thinking_budget must be at least 1024 when set")
         return value
+
+    @model_validator(mode="after")
+    def _budget_fits(self) -> "Settings":
+        if self.bedrock_thinking_budget and self.bedrock_thinking_budget >= self.bedrock_max_tokens:
+            raise ValueError(
+                f"BEDROCK_THINKING_BUDGET ({self.bedrock_thinking_budget}) must be below "
+                f"BEDROCK_MAX_TOKENS ({self.bedrock_max_tokens}); thinking tokens are drawn "
+                "from the same budget as the answer."
+            )
+        return self
 
     @property
     def resolved_mcp_url(self) -> str:

@@ -67,13 +67,16 @@ uv run python -m analyst_agent.agent.models     # lists Claude models your accou
 Set the chosen identifier as `BEDROCK_MODEL_ID`. Prefer an inference profile (`us.anthropic.…`)
 when the base model is not available on-demand in your region.
 
-**4. Run the three processes** (separate terminals)
+**4. Run everything**
 
 ```bash
-uv run python -m analyst_agent.mcp_server                      # MCP server  :8765
-uv run uvicorn analyst_agent.api.main:app --port 8000          # REST API    :8000
-uv run streamlit run src/analyst_agent/ui/app.py               # UI          :8501
+uv run start
 ```
+
+That starts the MCP server, the REST API and the Streamlit UI together, prefixing each one's
+output, and stops all three on Ctrl+C. It runs preflight checks first, so a database that is
+missing, unseeded or unreachable gives you the command to fix it rather than a failure three
+layers down. Pass `mcp`, `api` or `ui` to run a subset, or `--skip-checks` to start regardless.
 
 Open http://localhost:8501, or http://localhost:8000/docs for the API.
 
@@ -90,10 +93,11 @@ declared type, one default, and one place to change it.
 | `SEC_USER_AGENT` | `app-name your@email.com`. EDGAR returns 403 without a contact address |
 | `AWS_PROFILE` | Named profile from `~/.aws/config`. Blank uses the default chain. |
 | `AWS_REGION` | Defaults to `us-east-1` |
-| `BEDROCK_MODEL_ID` | Model or inference-profile id. See step 3. |
+| `BEDROCK_MODEL_ID` | Model or inference-profile id. Blank falls back to the default in `config.py`. |
 | `BEDROCK_MAX_TOKENS` | Defaults to 8192 |
-| `BEDROCK_TEMPERATURE` | Blank leaves it to the model |
-| `BEDROCK_THINKING_BUDGET` | Blank disables extended thinking. Minimum 1024 when set. |
+| `BEDROCK_TEMPERATURE` | Blank leaves it to the model. Recommended. |
+| `BEDROCK_PROMPT_CACHING` | Caches the system prompt and tool definitions between turns. Default on. |
+| `BEDROCK_THINKING_BUDGET` | Blank disables extended thinking. Must be at least 1024 and below `BEDROCK_MAX_TOKENS`. |
 | `AGENT_MAX_TURNS` | Tool-call turns before a run is abandoned. Defaults to 16. |
 | `MCP_HOST` / `MCP_PORT` | MCP server bind address |
 | `API_URL` | Where the UI looks for the API |
@@ -102,17 +106,35 @@ declared type, one default, and one place to change it.
 directly. An expired token surfaces as a 503 telling you to run `aws sso login --profile <name>`
 rather than a stack trace.
 
-### Choosing a model
+### Model and inference settings
 
-Sonnet-class or better is the right default. The agent writes SQL against a twelve-relation
+The default model is declared once, in `src/analyst_agent/config.py`:
+
+```python
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+```
+
+Sonnet-class or better is the right choice. The agent writes SQL against a twelve-relation
 schema, has to respect NULL semantics it is told about in prose, and has to produce genuinely
-different analysis per persona. A small model writes plausible but wrong SQL and flattens the
-persona differences, which is exactly what the brief grades.
+different analysis per persona. A smaller model writes plausible but wrong SQL and flattens the
+persona differences, which is exactly what the brief grades. Availability is per-account, so
+verify with `uv run python -m analyst_agent.agent.models`.
 
-`BEDROCK_THINKING_BUDGET` enables extended thinking where the model supports it. The tool loop
-already imposes structure, so it helps most at the final synthesis step rather than during
-retrieval. Note that Bedrock rejects `temperature` when thinking is enabled, so the adapter
-drops it automatically.
+**Prompt caching** is on by default and is a clear win for this workload. A cache point is
+placed after the system prompt and after the tool definitions; both are several thousand tokens
+and byte-identical on every turn, while only the growing message history sits after them. One
+question costs five to ten turns, each otherwise re-sending the whole prefix.
+
+**Temperature** is best left blank. The model default is tuned for tool use, and a low
+temperature has a specific failure mode in an agentic loop: when a query fails the model retries
+the same wrong SQL rather than varying its approach. It is also ignored when thinking is on,
+since Converse rejects the pair, so the adapter drops it.
+
+**Extended thinking** is off by default. With it enabled the model reasons before every turn,
+including turns whose only job is to call `describe_schema`, so most of the spend lands where it
+adds nothing. The persona playbook already forces an explicit ordered sequence. Worth trying at
+2048 if answers come back shallow. Thinking tokens are drawn from `BEDROCK_MAX_TOKENS`, so a
+budget at or above it leaves nothing for the answer; the config refuses that at startup.
 
 `AGENT_MAX_TURNS` defaults to 16. A complete pass is roughly `describe_schema`,
 `resolve_company`, three to five queries, then the answer; the remainder is headroom for

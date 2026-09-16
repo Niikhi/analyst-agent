@@ -56,10 +56,11 @@ def health() -> dict[str, Any]:
     settings = get_settings()
     return {
         "status": "ok",
-        "model": settings.bedrock_model_id or "<BEDROCK_MODEL_ID unset>",
+        "model": settings.bedrock_model_id,
         "aws_profile": settings.aws_profile or "<default chain>",
         "aws_region": settings.aws_region,
         "thinking_budget": settings.bedrock_thinking_budget,
+        "prompt_caching": settings.bedrock_prompt_caching,
         "max_turns": settings.agent_max_turns,
         "mcp_url": mcp_url(),
         "personas": list(PERSONA_KEYS),
