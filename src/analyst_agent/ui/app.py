@@ -100,7 +100,7 @@ def render_evidence(answer: dict, tool_calls: list[str], elapsed_ms: int) -> Non
                 }
                 for s in sources
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:
@@ -156,7 +156,7 @@ def render_cost(usage: dict | None) -> None:
                 }
                 for t in usage["per_turn"]
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -208,8 +208,8 @@ with st.sidebar:
 
 with st.expander("What this persona does differently", expanded=False):
     st.markdown(f"**{chosen['display_name']} works through:**")
-    for i, step in enumerate(chosen["playbook"], 1):
-        st.markdown(f"{i}. {step}")
+    steps = [f"{i}. {step}" for i, step in enumerate(chosen["playbook"], 1)]
+    st.markdown("\n".join(steps))
 
 default_q = SAMPLES.get((persona_key, sector), "")
 question = st.text_area("Question", value=default_q, height=90, key=f"q_{persona_key}_{sector}")
@@ -228,7 +228,12 @@ if submitted:
             st.stop()
 
     if response.status_code != 200:
-        st.error(f"{response.status_code}: {response.json().get('detail', response.text)}")
+        try:
+            detail = response.json().get("detail", response.text)
+        except ValueError:
+            detail = response.text[:1500] or "(empty response body)"
+        st.error(f"{response.status_code}")
+        st.code(detail, language=None)
         st.stop()
 
     payload = response.json()

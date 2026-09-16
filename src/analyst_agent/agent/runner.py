@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 
-from agents import Agent, ModelSettings, Runner, set_tracing_disabled
+from agents import (
+    Agent,
+    ModelSettings,
+    OpenAIChatCompletionsModel,
+    Runner,
+    set_tracing_disabled,
+)
+from agents.exceptions import ModelBehaviorError
 from agents.mcp import MCPServerStreamableHttp, MCPServerStreamableHttpParams
 from agents.models.interface import Model
 
@@ -28,6 +35,14 @@ class AnalystRequest:
         return self
 
 
+class UnparsableAnswer(RuntimeError):
+    def __init__(self, reason: str, raw: str | None, stop_reason: str | None = None) -> None:
+        self.reason = reason
+        self.raw = raw
+        self.stop_reason = stop_reason
+        super().__init__(reason)
+
+
 @dataclass
 class AnalystResult:
     persona: str
@@ -42,7 +57,9 @@ def mcp_url() -> str:
     return get_settings().resolved_mcp_url
 
 
-def build_agent(persona: Persona, sector: str, model: Model | str, server: MCPServerStreamableHttp) -> Agent:
+def build_agent(
+    persona: Persona, sector: str, model: Model | str, server: MCPServerStreamableHttp
+) -> Agent:
     return Agent(
         name=persona.display_name,
         instructions=persona.instructions(sector),
@@ -60,24 +77,35 @@ async def run_analysis(
 ) -> AnalystResult:
     request = request.validated()
     persona = get_persona(request.persona)
-    resolved_model = model if model is not None else default_model()
+    adapter = None
+    if model is None:
+        resolved_model, adapter = default_model()
+    else:
+        resolved_model = model
     turns = max_turns if max_turns is not None else get_settings().agent_max_turns
 
     params = MCPServerStreamableHttpParams(url=mcp_url())
     async with MCPServerStreamableHttp(params=params, cache_tools_list=True) as server:
         agent = build_agent(persona, request.sector, resolved_model, server)
-        result = await Runner.run(
-            agent,
-            f"Sector: {request.sector}\nQuestion: {request.question}",
-            max_turns=turns,
-        )
+        try:
+            result = await Runner.run(
+                agent,
+                f"Sector: {request.sector}\nQuestion: {request.question}",
+                max_turns=turns,
+            )
+        except ModelBehaviorError as exc:
+            raise UnparsableAnswer(
+                str(exc),
+                getattr(adapter or resolved_model, "last_text", None),
+                getattr(adapter or resolved_model, "last_stop_reason", None),
+            ) from exc
 
     tool_calls = [
         item.raw_item.name
         for item in result.new_items
         if getattr(item, "type", None) == "tool_call_item" and hasattr(item.raw_item, "name")
     ]
-    cost = getattr(resolved_model, "cost", None)
+    cost = getattr(adapter or resolved_model, "cost", None)
     return AnalystResult(
         persona=request.persona,
         sector=request.sector,
@@ -88,7 +116,9 @@ async def run_analysis(
     )
 
 
-def default_model() -> Model:
-    from analyst_agent.agent.bedrock import BedrockConverseModel
+def default_model() -> tuple[Model, "BedrockChatAdapter"]:
+    from analyst_agent.agent.bedrock import BedrockChatAdapter
 
-    return BedrockConverseModel.from_settings()
+    adapter = BedrockChatAdapter.from_settings()
+    model = OpenAIChatCompletionsModel(model=adapter.model_id, openai_client=adapter)
+    return model, adapter

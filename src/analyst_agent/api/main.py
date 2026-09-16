@@ -7,7 +7,14 @@ from pydantic import BaseModel, Field
 
 from analyst_agent.agent.personas import PERSONA_KEYS, load_personas
 from analyst_agent.agent.aws import AwsCredentialsUnavailable
-from analyst_agent.agent.runner import SECTORS, AnalystRequest, mcp_url, run_analysis
+from analyst_agent.agent.bedrock import BedrockTruncated
+from analyst_agent.agent.runner import (
+    SECTORS,
+    AnalystRequest,
+    UnparsableAnswer,
+    mcp_url,
+    run_analysis,
+)
 from analyst_agent.config import MissingSetting, get_settings
 
 PersonaKey = Literal["mutual_fund_analyst", "equity_analyst", "pe_analyst"]
@@ -105,6 +112,19 @@ async def ask(request: AskRequest) -> AskResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except AwsCredentialsUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BedrockTruncated as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except UnparsableAnswer as exc:
+        preview = (exc.raw or "")[:600]
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"The model's final message was not valid JSON for "
+                f"{persona.answer_type.__name__}. {exc.reason} "
+                f"Bedrock stopReason was {exc.stop_reason!r}. "
+                f"What it actually returned: {preview}"
+            ),
+        ) from exc
     except MaxTurnsExceeded as exc:
         raise HTTPException(
             status_code=504,
