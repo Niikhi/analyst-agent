@@ -39,6 +39,7 @@ class AskResponse(BaseModel):
     tool_calls: list[str] = Field(description="MCP tools the agent invoked, in order")
     elapsed_ms: int
     model: str
+    usage: dict[str, Any] | None = Field(default=None)
 
 
 class PersonaInfo(BaseModel):
@@ -129,4 +130,5 @@ async def ask(request: AskRequest) -> AskResponse:
         tool_calls=result.tool_calls,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         model=get_settings().bedrock_model_id,
+        usage=result.usage,
     )

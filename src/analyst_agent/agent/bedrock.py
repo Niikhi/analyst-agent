@@ -12,6 +12,7 @@ from openai.types.responses import (
 )
 
 from analyst_agent.agent.aws import as_credential_error, client
+from analyst_agent.agent.pricing import RunCost, TurnUsage
 from analyst_agent.config import get_settings
 
 CACHE_POINT = {"cachePoint": {"type": "default"}}
@@ -174,8 +175,13 @@ class BedrockConverseModel(Model):
     temperature: float | None = None
     thinking_budget: int | None = None
     prompt_caching: bool = True
+    cost: RunCost | None = field(default=None, repr=False)
     _client: Any = field(default=None, repr=False)
     _turn: int = field(default=0, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.cost is None:
+            self.cost = RunCost(model_id=self.model_id)
 
     @classmethod
     def from_settings(cls) -> "BedrockConverseModel":
@@ -253,13 +259,21 @@ class BedrockConverseModel(Model):
         except Exception as exc:
             raise as_credential_error(exc) from exc
 
-        raw_usage = payload.get("usage", {})
-        cached = raw_usage.get("cacheReadInputTokens", 0)
+        raw = payload.get("usage", {})
+        turn_usage = TurnUsage(
+            turn=self._turn,
+            prompt_tokens=raw.get("inputTokens", 0),
+            output_tokens=raw.get("outputTokens", 0),
+            cache_read_tokens=raw.get("cacheReadInputTokens", 0),
+            cache_write_tokens=raw.get("cacheWriteInputTokens", 0),
+        )
+        self.cost.turns.append(turn_usage)
+
         usage = Usage(
             requests=1,
-            input_tokens=raw_usage.get("inputTokens", 0) + cached,
-            output_tokens=raw_usage.get("outputTokens", 0),
-            total_tokens=raw_usage.get("totalTokens", 0),
+            input_tokens=turn_usage.billed_input_tokens,
+            output_tokens=turn_usage.output_tokens,
+            total_tokens=turn_usage.billed_input_tokens + turn_usage.output_tokens,
         )
         return ModelResponse(
             output=from_converse_response(payload, self._turn),

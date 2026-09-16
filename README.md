@@ -136,6 +136,13 @@ adds nothing. The persona playbook already forces an explicit ordered sequence. 
 2048 if answers come back shallow. Thinking tokens are drawn from `BEDROCK_MAX_TOKENS`, so a
 budget at or above it leaves nothing for the answer; the config refuses that at startup.
 
+**Cost** is reported on every response. `usage` carries per-turn token counts split into
+prompt, cache read and cache write, the cost of the run, and what it would have cost without
+caching. Rates live in `agent/pricing.py`, keyed by a substring of the model id; an unrecognised
+model yields token counts with `cost_usd: null` and `rates_known: false` rather than a wrong
+number. **Verify the rates against your own AWS bill** — Bedrock pricing is set by AWS, varies
+by region, and is not the same as Anthropic's first-party API pricing.
+
 `AGENT_MAX_TURNS` defaults to 16. A complete pass is roughly `describe_schema`,
 `resolve_company`, three to five queries, then the answer; the remainder is headroom for
 correcting a failed query. Exhausting it returns a 504 naming the limit rather than a partial
@@ -173,7 +180,19 @@ curl -X POST http://localhost:8000/ask \
     "out_of_scope": false
   },
   "tool_calls": ["describe_schema", "resolve_company", "run_sql"],
-  "elapsed_ms": 8421
+  "elapsed_ms": 8421,
+  "usage": {
+    "turns": 6,
+    "prompt_tokens": 5000,
+    "output_tokens": 1200,
+    "cache_read_tokens": 7800,
+    "cache_write_tokens": 3900,
+    "cost_usd": 0.049965,
+    "cost_without_caching_usd": 0.0681,
+    "saved_by_caching_usd": 0.018135,
+    "rates_known": true,
+    "per_turn": [{"turn": 1, "prompt_tokens": 4200, "cost_usd": 0.03022}]
+  }
 }
 ```
 

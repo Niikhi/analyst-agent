@@ -35,6 +35,7 @@ class AnalystResult:
     question: str
     answer: BaseAnswer
     tool_calls: list[str]
+    usage: dict | None = None
 
 
 def mcp_url() -> str:
@@ -76,12 +77,14 @@ async def run_analysis(
         for item in result.new_items
         if getattr(item, "type", None) == "tool_call_item" and hasattr(item.raw_item, "name")
     ]
+    cost = getattr(resolved_model, "cost", None)
     return AnalystResult(
         persona=request.persona,
         sector=request.sector,
         question=request.question,
         answer=result.final_output,
         tool_calls=tool_calls,
+        usage=cost.summary() if cost is not None else None,
     )
 
 

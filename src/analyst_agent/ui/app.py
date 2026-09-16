@@ -115,6 +115,52 @@ def render_evidence(answer: dict, tool_calls: list[str], elapsed_ms: int) -> Non
     st.caption(f"MCP tools called: {' -> '.join(tool_calls) or 'none'}  |  {elapsed_ms} ms")
 
 
+def render_cost(usage: dict | None) -> None:
+    if not usage:
+        return
+    st.markdown("### Cost")
+    cols = st.columns(4)
+    cost = usage.get("cost_usd")
+    cols[0].metric("This question", f"${cost:.4f}" if cost is not None else "rates unknown")
+    cols[1].metric("Turns", usage["turns"])
+    cols[2].metric(
+        "Input tokens",
+        f"{usage['prompt_tokens'] + usage['cache_read_tokens'] + usage['cache_write_tokens']:,}",
+    )
+    cols[3].metric("Output tokens", f"{usage['output_tokens']:,}")
+
+    saved = usage.get("saved_by_caching_usd")
+    if saved:
+        without = usage.get("cost_without_caching_usd")
+        st.caption(
+            f"Prompt caching saved ${saved:.4f} "
+            f"({saved / without * 100:.0f}% of ${without:.4f} uncached). "
+            f"{usage['cache_read_tokens']:,} tokens served from cache."
+        )
+    elif not usage.get("rates_known"):
+        st.caption(
+            f"No published rate for {usage['model']} in the pricing table, so only token "
+            "counts are shown."
+        )
+
+    with st.expander("Per-turn breakdown"):
+        st.dataframe(
+            [
+                {
+                    "Turn": t["turn"],
+                    "Prompt": f"{t['prompt_tokens']:,}",
+                    "Cache read": f"{t['cache_read_tokens']:,}",
+                    "Cache write": f"{t['cache_write_tokens']:,}",
+                    "Output": f"{t['output_tokens']:,}",
+                    "Cost": f"${t['cost_usd']:.5f}" if t["cost_usd"] is not None else "-",
+                }
+                for t in usage["per_turn"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 st.title("Analyst Agent")
 
 try:
@@ -197,6 +243,8 @@ if submitted:
     render_persona_fields(persona_key, answer)
     st.divider()
     render_evidence(answer, payload["tool_calls"], payload["elapsed_ms"])
+    st.divider()
+    render_cost(payload.get("usage"))
 
     with st.expander("Raw JSON (what the API returns to another system)"):
         st.json(payload)
