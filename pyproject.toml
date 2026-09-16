@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-    { name = "Nikhil Ganesh", email = "nalagandula@integconsulting.com" }
+    { name = "Nikhil Ganesh", email = "niga55522@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
